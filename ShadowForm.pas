@@ -15,14 +15,14 @@ type
     FShadowForm: TForm;
     FIsFadeIn: Boolean;
     FMaxOpacity: Byte;
-    FShowTime: Cardinal;
+    FDuration: Cardinal;
     FOpacityToSet: Byte;
     procedure UpdateOpacityProc;
     procedure CloseFormProc;
   protected
     procedure Execute; override;
   public
-    constructor Create(ShadowForm: TForm; IsFadeIn: Boolean; MaxOpacity: Byte; ShowTime: Cardinal);
+    constructor Create(ShadowForm: TForm; IsFadeIn: Boolean; MaxOpacity: Byte; Duration: Cardinal);
   end;
 
   // Класс для потока с опциями
@@ -42,22 +42,19 @@ type
 
   TShadowForm = class(TForm)
   private
-    FTimer: TTimer;
     FMaxOpacity: Byte;
     FCurrentOpacity: Byte;
     FShowTime: Cardinal;
-    FStartTime: Cardinal;
     FIsShowing: Boolean;
     FGradientShape: TGradientShape;
     FOptionsResult: TModalResult;
     FOptionsThread: TOptionsThread;
     FAnimationThread: TAnimationThread;
 
-    procedure TimerEvent(Sender: TObject);
     procedure WMEraseBkgnd(var Message: TWMEraseBkgnd); message WM_ERASEBKGND;
     procedure WMNCHitTest(var Message: TWMNCHitTest); message WM_NCHITTEST;
     procedure WMPaint(var Message: TWMPaint); message WM_PAINT;
-    procedure CreateComponents;
+    procedure FormShow(Sender: TObject);
     procedure StartFadeInAnimation;
     procedure StartFadeOutAnimation;
     procedure OnOptionsThreadTerminate(Sender: TObject);
@@ -76,14 +73,14 @@ implementation
 
 { TAnimationThread }
 
-constructor TAnimationThread.Create(ShadowForm: TForm; IsFadeIn: Boolean; MaxOpacity: Byte; ShowTime: Cardinal);
+constructor TAnimationThread.Create(ShadowForm: TForm; IsFadeIn: Boolean; MaxOpacity: Byte; Duration: Cardinal);
 begin
   inherited Create(True); // Создаем приостановленным
   FreeOnTerminate := False;
   FShadowForm := ShadowForm;
   FIsFadeIn := IsFadeIn;
   FMaxOpacity := MaxOpacity;
-  FShowTime := ShowTime;
+  FDuration := Duration;
 end;
 
 procedure TAnimationThread.UpdateOpacityProc;
@@ -103,44 +100,54 @@ var
   StartTime: Cardinal;
   Elapsed: Cardinal;
   Opacity: Byte;
-  i: Integer;
+  i, Steps: Integer;
+  StepDelay: Cardinal;
 begin
   if FIsFadeIn then
   begin
     // Анимация появления
     StartTime := GetTickCount;
+    Steps := 100; // Количество шагов для плавности
+    StepDelay := FDuration div Steps;
 
-    while FIsFadeIn and not Terminated do
+    for i := 0 to Steps do
     begin
-      Sleep(16); // ~60 FPS
+      if Terminated then Break;
+
+      if i > 0 then
+        Sleep(StepDelay);
 
       Elapsed := GetTickCount - StartTime;
-      if Elapsed >= FShowTime then
+      if Elapsed >= FDuration then
       begin
-        FOpacityToSet := FMaxOpacity;
-        Synchronize(UpdateOpacityProc);
-        Break;
+        Opacity := FMaxOpacity;
       end
       else
       begin
-        Opacity := Round(Elapsed / FShowTime * FMaxOpacity);
-        FOpacityToSet := Opacity;
-        Synchronize(UpdateOpacityProc);
+        // Линейная интерполяция прозрачности
+        Opacity := Round(Elapsed / FDuration * FMaxOpacity);
       end;
 
-      Sleep(1);
+      FOpacityToSet := Opacity;
+      Synchronize(UpdateOpacityProc);
+
+      if Elapsed >= FDuration then
+        Break;
     end;
   end
   else
   begin
-    // Анимация исчезновения
-    for i := 1 to 10 do
+    // Анимация исчезновения (500 мс)
+    Steps := 10;
+    StepDelay := 50; // 10 * 50 = 500 мс
+
+    for i := 1 to Steps do
     begin
       if Terminated then Break;
 
-      Sleep(50); // 10 * 50 = 500 мс
+      Sleep(StepDelay);
 
-      Opacity := FMaxOpacity - Round(FMaxOpacity * (i / 10));
+      Opacity := FMaxOpacity - Round(FMaxOpacity * (i / Steps));
       if Opacity < 0 then Opacity := 0;
 
       FOpacityToSet := Opacity;
@@ -235,7 +242,6 @@ end;
 constructor TShadowForm.Create(AOwner: TComponent);
 begin
   inherited CreateNew(AOwner);
-  CreateComponents;
 
   // Убираем рамку и заголовок
   BorderStyle := bsNone;
@@ -244,19 +250,24 @@ begin
   AlphaBlend := True;
   AlphaBlendValue := 0;
 
+  // Назначаем обработчик показа формы
+  OnShow := FormShow;
+
   FCurrentOpacity := 0;
   FMaxOpacity := 128;
   FShowTime := 2500;
   FIsShowing := True;
 end;
 
-procedure TShadowForm.CreateComponents;
+procedure TShadowForm.FormShow(Sender: TObject);
 begin
-  // Создаем таймер для анимации (запасной вариант)
-  FTimer := TTimer.Create(Self);
-  FTimer.Interval := 16; // ~60 FPS
-  FTimer.OnTimer := TimerEvent;
-  FTimer.Enabled := False;
+  // При показе формы запускаем анимацию появления
+  StartFadeInAnimation;
+
+  // Создаем поток для формы опций
+  FOptionsThread := TOptionsThread.Create(Self);
+  FOptionsThread.OnTerminate := OnOptionsThreadTerminate;
+  FOptionsThread.Resume;
 end;
 
 procedure TShadowForm.CreateParams(var Params: TCreateParams);
@@ -390,43 +401,6 @@ begin
   end;
 end;
 
-procedure TShadowForm.TimerEvent(Sender: TObject);
-var
-  Elapsed: Cardinal;
-  Opacity: Byte;
-begin
-  if FIsShowing then
-  begin
-    // Анимация появления
-    Elapsed := GetTickCount - FStartTime;
-    if Elapsed >= FShowTime then
-    begin
-      FTimer.Enabled := False;
-      UpdateOpacity(FMaxOpacity);
-    end
-    else
-    begin
-      // Линейная интерполяция прозрачности
-      Opacity := Round(Elapsed / FShowTime * FMaxOpacity);
-      UpdateOpacity(Opacity);
-    end;
-  end
-  else
-  begin
-    // Анимация исчезновения
-    if FCurrentOpacity <= 10 then
-    begin
-      FTimer.Enabled := False;
-      Close;
-    end
-    else
-    begin
-      Opacity := FCurrentOpacity - Round(FCurrentOpacity * 0.1);
-      UpdateOpacity(Opacity);
-    end;
-  end;
-end;
-
 procedure TShadowForm.StartFadeInAnimation;
 begin
   if Assigned(FAnimationThread) then
@@ -512,49 +486,23 @@ begin
     ParentRect.Bottom - ParentRect.Top
   );
 
-  // Запускаем анимацию появления
-  FStartTime := GetTickCount;
-  FIsShowing := True;
-  StartFadeInAnimation;
+  // Устанавливаем начальную прозрачность
+  UpdateOpacity(0);
 
-  // Создаем поток для формы опций
-  FOptionsThread := TOptionsThread.Create(Self);
-  FOptionsThread.OnTerminate := OnOptionsThreadTerminate;
-  FOptionsThread.Resume;
+  // Показываем тень (при показе запустится анимация и поток с опциями)
+  ShowModal;
 
-  // Показываем тень
-  Show;
-
-  // Основной цикл ожидания
-  while Showing do
-  begin
-    Application.ProcessMessages;
-
-    // Проверяем завершился ли поток опций
-    if Assigned(FOptionsThread) and FOptionsThread.Finished then
-    begin
-      FOptionsResult := FOptionsThread.Result;
-
-      if FIsShowing then
-      begin
-        FIsShowing := False;
-        StartFadeOutAnimation;
-      end;
-
-      Break;
-    end;
-
-    Sleep(10);
-  end;
-
-  // Ждем завершения анимации исчезновения
+  // Ждем завершения всех потоков
   if Assigned(FAnimationThread) then
   begin
-    while FAnimationThread <> nil do
-    begin
-      Application.ProcessMessages;
-      Sleep(10);
-    end;
+    FAnimationThread.WaitFor;
+    FreeAndNil(FAnimationThread);
+  end;
+
+  if Assigned(FOptionsThread) then
+  begin
+    FOptionsThread.WaitFor;
+    FreeAndNil(FOptionsThread);
   end;
 
   Result := FOptionsResult;

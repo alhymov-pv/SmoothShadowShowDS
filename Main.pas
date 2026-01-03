@@ -72,7 +72,8 @@ begin
 
   Shadow := TShadowForm.Create(nil);
   try
-    Result := Shadow.Execute(Handle, GradientShape, MaxOpacity, 2500);
+    // Теперь используем ShowModal вместо Execute
+    Result := Shadow.ShowModal;
 
     if Result = mrOk then
       ShowMessage('Опции подтверждены!')
