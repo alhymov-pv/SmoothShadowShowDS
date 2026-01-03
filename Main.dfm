@@ -1,4 +1,4 @@
-object TMainForm: TTMainForm
+object MainForm: TMainForm
   Left = 0
   Top = 0
   Caption = 'TMainForm'
@@ -38,7 +38,7 @@ object TMainForm: TTMainForm
   object ComboBox1: TComboBox
     Left = 104
     Top = 61
-    Width = 145
+    Width = 283
     Height = 23
     TabOrder = 1
     Text = 'ComboBox1'
@@ -46,7 +46,7 @@ object TMainForm: TTMainForm
   object ComboBox2: TComboBox
     Left = 104
     Top = 112
-    Width = 145
+    Width = 283
     Height = 23
     TabOrder = 2
     Text = 'ComboBox2'
